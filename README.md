@@ -9,22 +9,19 @@ If you use this code or model in your work, please cite our paper (see below).
 Khante, P., Madden-Rusnak, A., & de Barbaro, K. (2025). Real-world Classification of Caregiver Sensitivity to Infant Distress. _In Submission_.
 
 ## Models and Main Package Versions 
-Trained Random Forest model can be found in this repository: Final_Sensitivity_Model.
+Trained Random Forest model can be found in this repository: Multiscale_Temporal_Model.h5.
 
 ### Versions
 
-# Code
 ## Input Requirements
 
-This code assumes that each distress episode has been annotated for **distress** — either through manual labeling or using publicly available models — and includes pre-extracted **LENA adult speech tags** (`FAN` and `MAN`).
+Before running any code, make sure the following input files and folders are prepared as shown in the `Example_Inputs` folder:
 
-Each participant should have a single `.csv` file containing annotations and ground truth labels for all their distress episodes. These files should be placed in the `Participant_Annotations` folder in `Example_inputs`. The format must **exactly match** the structure shown in `P1.csv` (more info below).
+### 1. `Distress_Episode_List.csv`
+A `.csv` file containing a list of all distress episode IDs to be processed. It should have a single column with the header `Dist_Ep_IDs`.
 
-Raw audio files for each distress episode should be stored as individual `.wav` files in the `Raw_Audio` folder, with filenames matching the format: `<Participant_ID>_<GT_Episode>`, where `Participant_ID` is the identifier for the participant and `GT_Episode` corresponds to the episode identifier in the CSV.
-
-### 📄 Input CSV File Format
-
-Each `.csv` file in the `Participant_Annotations` folder should contain the following columns:
+### 2. `Episode_Annotations.csv`
+This folder should contain one `.csv` file per participant, with annotations covering all of their distress episodes. Each file should be named using the format `<ParticipantID>.csv` (e.g., `P1.csv`). To use the trained model, every distress episode must be annotated for **distress** — either through manual labeling or using publicly available models — and must include pre-extracted **LENA adult speech tags** (`FAN` and `MAN`). Each file must include the following columns:
 
 - `GT_Episode`: Unique identifier for each distress episode (e.g., `Dist_Ep1`)
 - `Begin_res`: Start time of an annotation. All new distress episodes start from 0 (in seconds).
@@ -33,18 +30,23 @@ Each `.csv` file in the `Participant_Annotations` folder should contain the foll
 - `GT_Detail`: Distress marked during the episode using `Distress`. Non-distress is left unmarked.  
 - `*FAN`: LENA-detected female adult speech during the episode marked using `FAN`.
 - `*MAN`: LENA-detected male adult speech during the episode marked using `MAN`.
-- `Sensitivity`: Ground truth label for caregiver sensitivity (`High` or `Low`).
 
-> ⚠️ **Important:** Column names and annotation labels must match exactly for the code to run successfully.
+> ⚠️ The column names and structure must exactly match the format shown above. See `Participant_Annotations/P1.csv` for a working example.
 
-## Preprocessing distress episodes (removing non-distress)
+### 3. `Raw_Audio/`
+This folder should contain the original raw `.wav` files, one for each distress episode. Each file should be named as: <ParticipantID>_<GT_Episode>.wav (e.g, `P1_Dist_Ep1.wav`)
+
+The filenames must match the distress episodes IDs in `Distress_Episode_List.csv`.
+
+## Code
+### Step 1: Preprocess Distress Episodes (Remove Non-distress)
+The script `Code/remove_nondistress.py` processes each `.csv` file in the `Participant_Annotations` folder along with its corresponding audio file in the `Raw_Audio` folder. It removes all non-distress segments and retains only the portions labeled as `Distress`. The resulting audio for each episode is saved in the `Audio_Nondistress_Removed` folder, with all distress segments concatenated into a single `.wav` file per episode.
+
+### Step 2: Extract Frame-level Features
 
 
+### Step 3: Extract Event-level Features
 
-## Extract frame-level features
+### Step 4: Extract State-level Features
 
-## Extract event-level features
-
-## Extract state-level features
-
-## Combine features and predict using multiscale temporal model
+### Step 5: Predict Sensitivity using Multiscale Temporal Model
