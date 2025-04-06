@@ -1,5 +1,9 @@
 # CaregiverSensitivityClassifier
-This repository contains the code to run the real-world binary caregiver sensitivity model for audio collected using LENA, as described in this [paper]()(In Submission). Given the raw audio of infant distress episodes along with distress/non-distress labels and LENA adult speech tags, the code extracts the required features and the model predicts a caregiver sensitivity level (_High_ vs _Low_) for each distress episode. If you use the model or code, please cite the following paper.
+This repository contains the code for the real-world binary caregiver sensitivity classification model, developed for audio data collected using LENA devices. The model is described in detail in our [paper]()(In Submission).
+
+Given raw audio recordings of infant distress episodes, along with distress annotations and LENA-derived adult speech tags, the pipeline extracts relevant features and predicts the caregiver’s sensitivity level (_High_ vs _Low_) for each episode.
+
+If you use this code or model in your work, please cite our paper (see below).
 
 ## Citation Information
 Khante, P., Madden-Rusnak, A., & de Barbaro, K. (2025). Real-world Classification of Caregiver Sensitivity to Infant Distress. _In Submission_.
