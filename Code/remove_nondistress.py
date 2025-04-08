@@ -1,9 +1,3 @@
-#! /Users/priyanka/anaconda3/bin/python
-
-import os
-import pandas as pd
-from pydub import AudioSegment
-
 # This file takes in the raw audio inputs for the distress episodes. It uses the annotated distress
 # to keep the distress and remove the non-distress. Outputs are .wav episodes with non-distress removed.
 
