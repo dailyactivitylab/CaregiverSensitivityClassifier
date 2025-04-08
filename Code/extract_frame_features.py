@@ -1,9 +1,3 @@
-#! /Users/priyanka/anaconda3/bin/python
-
-import os
-import pandas as pd
-from pydub import AudioSegment
-
 # This file extracts the frame-level featurs from each of the distress episodes
 
 import os
