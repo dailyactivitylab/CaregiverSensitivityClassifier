@@ -1,4 +1,4 @@
-#! /Users/priyanka/anaconda3/bin/python
+# This file extracts the event-level features from each of the distress episodes
 
 import librosa
 import numpy as np
@@ -6,8 +6,6 @@ import pandas as pd
 from pydub import AudioSegment
 from itertools import compress
 import scipy.stats as sp
-
-# This file extracts the event-level features from each of the distress episodes
 
 EPISODE_ANNOTATIONS = "../Example_Inputs/Episode_Annotations.csv"
 OUTPUT_CSV = "../Features/Event_level_features.csv"
