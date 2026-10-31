@@ -1,134 +1,161 @@
-# This file extracts the event-level features from each of the distress episodes
+#! /usr/bin/env python
 
+import os
 import librosa
 import numpy as np
 import pandas as pd
 from pydub import AudioSegment
-from itertools import compress
-import scipy.stats as sp
+
+# This file extracts the event-level features from each of the distress episodes.
+#
+# For each episode we compute (all distress annotation rows and the non-distress rows around them are used, so
+# a caregiver response that only comes after the infant has stopped is still counted):
+#   - Latency of response: for each distress vocalization (an uninterrupted stretch of distress rows), the time
+#     from its onset to the first caregiver (FAN or MAN) vocalization before the next distress vocalization
+#     begins. The median and IQR over the episode's vocalizations are saved (the IQR needs at least two).
+#   - Proportion of response: the share of distress vocalizations that a caregiver vocalized during.
+#   - Overall latency of response (Caregiver_first_begin): time from the start of the episode to the first
+#     caregiver vocalization.
+#   - Warmth: median and IQR of the F0 of FAN and MAN vocalizations during distress.
 
 EPISODE_ANNOTATIONS = "../Example_Inputs/Episode_Annotations.csv"
+RAW_AUDIO_DIR = "../Example_Inputs/Raw_Audio"
 OUTPUT_CSV = "../Features/Event_level_features.csv"
 
-# Get annotations
-episode_annotations = pd.read_csv(EPISODE_ANNOTATIONS)
+# Rows closer together than this (seconds) are treated as touching
+TIME_TOLERANCE = 0.01
 
-# Initialize output DataFrame
-output_df = pd.DataFrame(columns=["Dist_Ep_IDs", "Overall_latency_of_response", "Latency_of_response_median", "Latency_of_response_iqr", 
-                                  "Caregiver_resp_prop", "Warmth_median_FAN", "Warmth_iqr_FAN", "Warmth_median_MAN", "Warmth_iqr_MAN"])
+OUTPUT_COLUMNS = ["Dist_Ep_IDs", "Caregiver_first_begin", "Overall_latency_of_response",
+                  "Latency_of_response_median", "Latency_of_response_iqr",
+                  "Caregiver_resp_prop", "Warmth_median_FAN", "Warmth_iqr_FAN", "Warmth_median_MAN", "Warmth_iqr_MAN"]
 
-# Process each distress episode
-for dist_ep_id, group in episode_annotations.groupby("Dist_Ep_IDs"):
 
-    # Initialize lists to store all F0 values for FAN and MAN within the distress episode
-    fan_f0_values = []
-    man_f0_values = []
-    
-    # Initialize variables to compute latencies and caregiver response proportions
-    latencies = []
-    num_with_response = 0
+def has_value(value):
+    """True if an annotation cell (*FAN / *MAN) is marked."""
+    return pd.notna(value) and str(value).strip() != ""
 
-    # Track the current vocalization status
-    vocalizing = False
-    first_fan_or_man_time = None
 
-    # Iterate through each row in the group to extract relevant information
-    for i, row in group.iterrows():
-        # Check for a "Distress" vocalization
-        if row['GT_Detail'] == "Distress":
-            if not vocalizing:
-                vocalizing = True
-                first_fan_or_man_time = None  # Reset when a new vocalization starts
-                
-            # Process FAN response (if exists and co-occurs with distress)
-            if pd.notna(row['*FAN']):
-                if first_fan_or_man_time is None:
-                    first_fan_or_man_time = row['Begin_res']  # Record first FAN response time
-                # Get the corresponding audio of the distress episode
-                audio = AudioSegment.from_file(f"../Example_Inputs/Raw_Audio/{dist_ep_id}.wav", format="wav")
-                dist_ep = audio[row['Begin_res']*1000:row['End_res']*1000]
-                dist_ep = dist_ep.get_array_of_samples()
-                dist_ep = np.array(dist_ep).astype(np.float32)
-
-                # Extract warmth (F0) from the FAN audio segment
-                f0, voiced_flag, voiced_probs = librosa.pyin(y=dist_ep, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
-                # Only compute F0 averages for voiced parts
-                f0_sub = np.array(list(compress(f0, voiced_flag)))
-                fan_f0_values.extend(f0_sub)
-                
-            # Process MAN response (if exists and co-occurs with distress)
-            if pd.notna(row['*MAN']):
-                if first_fan_or_man_time is None:
-                    first_fan_or_man_time = row['Begin_res']  # Record first MAN response time
-                # Get the corresponding audio of the distress episode
-                audio = AudioSegment.from_file(f"../Example_Inputs/Raw_Audio/{dist_ep_id}.wav", format="wav")
-                dist_ep = audio[row['Begin_res']*1000:row['End_res']*1000]
-                dist_ep = dist_ep.get_array_of_samples()
-                dist_ep = np.array(dist_ep).astype(np.float32)
-
-                # Extract warmth (F0) from the MAN audio segment
-                f0, voiced_flag, voiced_probs = librosa.pyin(y=dist_ep, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
-                # Only compute F0 averages for voiced parts
-                f0_sub = np.array(list(compress(f0, voiced_flag)))
-                man_f0_values.extend(f0_sub)
-            
+def get_distress_stretches(rows):
+    """Split an episode's rows (sorted by time) into distress vocalizations: uninterrupted runs of distress rows.
+    Returns a list of lists of rows."""
+    stretches, current, previous_end = [], [], None
+    for _, row in rows.iterrows():
+        if row["GT_Detail"] == "Distress":
+            if current and abs(row["Begin_res"] - previous_end) <= TIME_TOLERANCE:
+                current.append(row)
+            else:
+                if current:
+                    stretches.append(current)
+                current = [row]
+            previous_end = row["End_res"]
         else:
-            # End of vocalization; compute latencies and response proportions
-            if vocalizing:
-                if first_fan_or_man_time is not None:
-                    latency = first_fan_or_man_time - row['Begin_res']
-                    latencies.append(latency)
-                vocalizing = False
+            if current:
+                stretches.append(current)
+            current, previous_end = [], None
+    if current:
+        stretches.append(current)
+    return stretches
 
-            # Proportion of responses
-            if row['GT_Detail'] == "Distress" and (pd.notna(row['*FAN']) or pd.notna(row['*MAN'])):
-                num_with_response += 1
 
-    # Calculate overall latency of response (first FAN or MAN) for the episode
-    if latencies:
-        overall_latency_of_response = min(latencies)
-    else:
-        overall_latency_of_response = np.nan
+def get_response_features(group):
+    """Latencies of response, proportion of distress vocalizations with a response, and the time of the first
+    caregiver vocalization in the episode."""
+    rows = group.sort_values("Begin_res")
+    stretches = get_distress_stretches(rows)
 
-    # Calculate median and IQR of latency of responses
-    if latencies:
-        latency_median = np.median(latencies)
-        latency_iqr = np.percentile(latencies, 75) - np.percentile(latencies, 25)
-    else:
-        latency_median, latency_iqr = np.nan, np.nan
+    caregiver = rows["*FAN"].apply(has_value) | rows["*MAN"].apply(has_value)
+    caregiver_begins = rows.loc[caregiver, "Begin_res"].to_numpy(dtype=float)
 
-    # Calculate the proportion of responses
-    total_distress_vocalizations = group[group['GT_Detail'] == "Distress"].shape[0]
-    if total_distress_vocalizations > 0:
-        caregiver_resp_prop = num_with_response / total_distress_vocalizations
-    else:
-        caregiver_resp_prop = np.nan
+    latencies, n_responded = [], 0
+    onsets = [stretch[0]["Begin_res"] for stretch in stretches]
+    for k, stretch in enumerate(stretches):
+        onset = onsets[k]
+        next_onset = onsets[k + 1] if k + 1 < len(onsets) else np.inf
+        # First caregiver vocalization from this onset until the next distress vocalization starts
+        in_window = caregiver_begins[(caregiver_begins >= onset - TIME_TOLERANCE) & (caregiver_begins < next_onset - TIME_TOLERANCE)]
+        if len(in_window) > 0:
+            latencies.append(max(0.0, float(in_window.min() - onset)))
+        # A response only counts toward the proportion if the caregiver vocalizes during the distress itself
+        if any(has_value(r["*FAN"]) or has_value(r["*MAN"]) for r in stretch):
+            n_responded += 1
 
-    # Calculate median and IQR for FAN and MAN F0 within the distress episode
-    if fan_f0_values:
-        fan_median = np.median(fan_f0_values)
-        fan_iqr = np.percentile(fan_f0_values, 75) - np.percentile(fan_f0_values, 25)
-    else:
-        fan_median, fan_iqr = np.nan, np.nan
+    response_prop = n_responded / len(stretches) if stretches else np.nan
+    first_begin = float(caregiver_begins.min() - rows["Begin_res"].min()) if len(caregiver_begins) > 0 else np.nan
+    return latencies, response_prop, first_begin
 
-    if man_f0_values:
-        man_median = np.median(man_f0_values)
-        man_iqr = np.percentile(man_f0_values, 75) - np.percentile(man_f0_values, 25)
-    else:
-        man_median, man_iqr = np.nan, np.nan
 
-    # Append the results to the output DataFrame
-    output_df = output_df.append({
-        "Dist_Ep_IDs": dist_ep_id,
-        "Overall_latency_of_response": overall_latency_of_response,
-        "Latency_of_response_median": latency_median,
-        "Latency_of_response_iqr": latency_iqr,
-        "Caregiver_resp_prop": caregiver_resp_prop,
-        "Warmth_median_FAN": fan_median,
-        "Warmth_iqr_FAN": fan_iqr,
-        "Warmth_median_MAN": man_median,
-        "Warmth_iqr_MAN": man_iqr
-    }, ignore_index=True)
+def get_f0(audio, begin, end):
+    """Voiced F0 values (Hz) in the audio between begin and end (seconds), as in the original script."""
+    segment = audio[begin * 1000:end * 1000]
+    samples = np.array(segment.get_array_of_samples()).astype(np.float32)
+    if len(samples) == 0:
+        return np.array([])
+    try:
+        f0, voiced_flag, voiced_probs = librosa.pyin(y=samples, fmin=librosa.note_to_hz('C2'), fmax=librosa.note_to_hz('C7'))
+    except Exception as e:  # e.g. segment too short to analyse
+        print(f"  Could not extract F0 for {begin:.2f}-{end:.2f}s: {e}")
+        return np.array([])
+    # Only keep the voiced parts
+    return f0[voiced_flag]
 
-# Save the output to a CSV
-output_df.to_csv(OUTPUT_CSV, index=False)
+
+def median_and_iqr(values):
+    if len(values) == 0:
+        return np.nan, np.nan
+    return float(np.median(values)), float(np.percentile(values, 75) - np.percentile(values, 25))
+
+
+def main():
+    episode_annotations = pd.read_csv(EPISODE_ANNOTATIONS)
+
+    rows = []
+    for dist_ep_id, group in episode_annotations.groupby("Dist_Ep_IDs"):
+        distress_rows = group[group["GT_Detail"] == "Distress"].sort_values("Begin_res")
+
+        # Latency and proportion of caregiver response, and time of the first caregiver vocalization
+        latencies, caregiver_resp_prop, caregiver_first_begin = get_response_features(group)
+        overall_latency = min(latencies) if latencies else np.nan
+        latency_median = float(np.median(latencies)) if latencies else np.nan
+        latency_iqr = float(np.percentile(latencies, 75) - np.percentile(latencies, 25)) if len(latencies) > 1 else np.nan
+
+        has_fan = distress_rows["*FAN"].apply(has_value)
+        has_man = distress_rows["*MAN"].apply(has_value)
+
+        # Warmth (F0) of FAN and MAN vocalizations during distress. The audio is loaded once per episode.
+        fan_f0, man_f0 = [], []
+        if has_fan.any() or has_man.any():
+            audio_path = os.path.join(RAW_AUDIO_DIR, f"{dist_ep_id}.wav")
+            try:
+                audio = AudioSegment.from_file(audio_path, format="wav")
+            except FileNotFoundError:
+                print(f"Warning: audio file not found for episode {dist_ep_id}, warmth features will be empty")
+                audio = None
+            if audio is not None:
+                for (_, row), fan, man in zip(distress_rows.iterrows(), has_fan, has_man):
+                    if fan:
+                        fan_f0.extend(get_f0(audio, row["Begin_res"], row["End_res"]))
+                    if man:
+                        man_f0.extend(get_f0(audio, row["Begin_res"], row["End_res"]))
+        fan_median, fan_iqr = median_and_iqr(fan_f0)
+        man_median, man_iqr = median_and_iqr(man_f0)
+
+        rows.append({
+            "Dist_Ep_IDs": dist_ep_id,
+            "Caregiver_first_begin": caregiver_first_begin,
+            "Overall_latency_of_response": overall_latency,
+            "Latency_of_response_median": latency_median,
+            "Latency_of_response_iqr": latency_iqr,
+            "Caregiver_resp_prop": caregiver_resp_prop,
+            "Warmth_median_FAN": fan_median,
+            "Warmth_iqr_FAN": fan_iqr,
+            "Warmth_median_MAN": man_median,
+            "Warmth_iqr_MAN": man_iqr,
+        })
+
+    output_df = pd.DataFrame(rows, columns=OUTPUT_COLUMNS)
+    os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+    output_df.to_csv(OUTPUT_CSV, index=False)
+
+
+if __name__ == "__main__":
+    main()

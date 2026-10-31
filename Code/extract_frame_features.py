@@ -1,4 +1,4 @@
-# This file extracts the frame-level featurs from each of the distress episodes
+#! /usr/bin/env python
 
 import os
 import numpy as np
@@ -6,6 +6,8 @@ import pandas as pd
 from pyAudioAnalysis import audioBasicIO as aIO
 from pyAudioAnalysis import ShortTermFeatures
 from tqdm import tqdm
+
+# This file extracts the frame-level features from each of the distress episodes
 
 # Paths
 DISTRESS_LIST_CSV = "../Example_Inputs/Distress_Episode_List.csv"
@@ -15,15 +17,15 @@ OUTPUT_CSV = "../Features/Frame_level_features.csv"
 # Read list of distress episodes
 df_list = pd.read_csv(DISTRESS_LIST_CSV)
 
-# Create output dataframe
-columns = ["Dist_Ep_IDs"] + [f"F_{i}" for i in range(1, 77)]  # 19 features × 4 stats = 76
-all_features = pd.DataFrame(columns=columns)
+# Output columns: 19 features x 4 statistics = 76
+columns = ["Dist_Ep_IDs"] + [f"F_{i}" for i in range(1, 77)]
+rows = []
 
 for _, row in tqdm(df_list.iterrows(), total=len(df_list)):
     episode_id = row['Dist_Ep_IDs']
     audio_file = episode_id + ".wav"
     audio_path = os.path.join(AUDIO_DIR, audio_file)
-    
+
     try:
         Fs, audio = aIO.read_audio_file(audio_path)
         audio = audio.astype(np.float32)
@@ -44,10 +46,9 @@ for _, row in tqdm(df_list.iterrows(), total=len(df_list)):
                 np.max(F, axis=1)
             ), axis=0)
 
-            final_features = [episode_id] + F_out.tolist()
-
-            # Append to output CSV
-            pd.DataFrame([final_features]).to_csv(OUTPUT_CSV, mode='a', header=not os.path.exists(OUTPUT_CSV), index=False)
+            rows.append([episode_id] + F_out.tolist())
+        else:
+            print(f"Skipped {audio_file}: shorter than 0.4 seconds.")
 
     except MemoryError:
         print(f"Skipped {audio_file} due to memory error (likely too long).")
@@ -58,3 +59,7 @@ for _, row in tqdm(df_list.iterrows(), total=len(df_list)):
     except Exception as e:
         print(f"Error processing {audio_file}: {e}")
         continue
+
+# Write all episodes at once, with named columns (this also overwrites any earlier run's output)
+os.makedirs(os.path.dirname(OUTPUT_CSV), exist_ok=True)
+pd.DataFrame(rows, columns=columns).to_csv(OUTPUT_CSV, index=False)
