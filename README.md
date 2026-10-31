@@ -8,6 +8,30 @@ If you use this code or model in your work, please cite our paper (see below).
 ## Citation Information
 Khante, P., Madden-Rusnak, A., & de Barbaro, K. (2025). Real-world Classification of Caregiver Sensitivity to Infant Distress. _In Submission_.
 
+## Repository structure
+
+```
+CaregiverSensitivityClassifier/
+├── Code/                      all scripts (run them from inside this folder)
+├── Example_Inputs/            Distress_Episode_List.csv, Episode_Annotations.csv, Raw_Audio/
+│   └── Audio_Nondistress_Removed/   created by Step 1
+├── Features/                  created by Steps 2-4
+├── Model/                     Sensitivity_RF.joblib (the trained model)
+├── Results/                   created by predict.py and evaluate_model.py
+└── Training_Data/             only needed to train or evaluate a model (not shared)
+```
+
+All scripts use relative paths (`../Example_Inputs`, `../Features`, and so on), so run them from inside `Code/`.
+
+## Installation
+
+```
+pip install -r requirements.txt
+```
+
+The saved model should be loaded with the same scikit-learn version it was trained with. The versions used are
+pinned in `requirements.txt`.
+
 ## Input Requirements
 
 Before running any code, make sure the following input files and folders are prepared as shown in the `Example_Inputs` folder:
@@ -28,42 +52,152 @@ A `.csv` file containing annotations for all distress episodes. To use the train
 
 > ⚠️ The column names and structure must exactly match the format shown above.
 
+Keep the non-distress rows (rows with an empty `GT_Detail`) in the file. The event-level features use them, so that a
+caregiver response that only comes after the infant has stopped is still counted. Each annotation row should be a
+stretch of time during which nothing changes, so a new row starts whenever distress, `*FAN` or `*MAN` starts or stops.
+
 ### 3. `Raw_Audio/`
 This folder should contain the original raw `.wav` files, one for each distress episode. The filenames must match the distress episodes IDs in `Distress_Episode_List.csv`.
 
 ## Code
+
 ### Step 1: Preprocess Distress Episodes (Remove Non-distress)
-The script `Code/remove_nondistress.py` processes each `.csv` file in the `Participant_Annotations` folder along with its corresponding audio file in the `Raw_Audio` folder. It removes all non-distress segments and retains only the portions labeled as `Distress`. The resulting audio for each episode is saved in the `Audio_Nondistress_Removed` folder, with all distress segments concatenated into a single `.wav` file per episode.
+The script `Code/remove_nondistress.py` reads `Example_Inputs/Episode_Annotations.csv` along with the corresponding audio files in the `Raw_Audio` folder. It removes all non-distress segments and retains only the portions labeled as `Distress`. The resulting audio for each episode is saved in the `Audio_Nondistress_Removed` folder, with all distress segments concatenated into a single `.wav` file per episode.
 
 ```
 python remove_nondistress.py
 ```
 
 ### Step 2: Extract Frame-level Features
-The script `Code/extract_frame_features.py` reads each distress episode listed in `Distress_Episode_List.csv`, loads the corresponding `.wav` file from the `Audio_Nondistress_Removed` folder, extracts acoustic features, and saves their summary statistics (median, IQR, min, max) to `Features/Frame_Features.csv`.
+The script `Code/extract_frame_features.py` reads each distress episode listed in `Distress_Episode_List.csv`, loads the corresponding `.wav` file from the `Audio_Nondistress_Removed` folder, extracts acoustic features, and saves their summary statistics (median, IQR, min, max) to `Features/Frame_level_features.csv`.
+
+Short-term acoustic features are computed in 0.4 second windows with a 0.2 second step. Nineteen features are kept,
+each summarised by its median, IQR, minimum and maximum, giving 76 columns (`F_1` to `F_76`). Episodes with less than
+0.4 seconds of distress audio are skipped.
 
 ```
 python extract_frame_features.py
 ```
 
 ### Step 3: Extract Event-level Features
-The script `Code/extract_event_features.py` reads each distress episode from `Episode_Annotations.csv`, locates corresponding `.wav` files in the `Raw_Audio` folder, and extracts event-level features summarizing caregiver responsiveness and vocal tone. These include response latencies, response proportions, and vocal tone warmth (F0) statistics for FAN and MAN vocalizations during distress periods. Results are saved to `Features/Event_Features.csv`.
+The script `Code/extract_event_features.py` reads each distress episode from `Episode_Annotations.csv`, locates corresponding `.wav` files in the `Raw_Audio` folder, and extracts event-level features summarizing caregiver responsiveness and vocal tone. These include response latencies, response proportions, and vocal tone warmth (F0) statistics for FAN and MAN vocalizations during distress periods. Results are saved to `Features/Event_level_features.csv`.
+
+A *distress vocalization* is an uninterrupted stretch of distress rows. A *caregiver vocalization* is a row marked
+`FAN` or `MAN`.
+
+| Feature | Meaning |
+|---|---|
+| `Caregiver_first_begin` | Overall latency of response: seconds from the start of the episode to the first caregiver vocalization. Empty if the caregiver never vocalizes. |
+| `Latency_of_response_median`, `Latency_of_response_iqr` | For each distress vocalization, the time from its onset to the first caregiver vocalization before the next distress vocalization begins (responses after the distress has ended count). Median and IQR over the episode. The IQR is empty with fewer than two latencies. |
+| `Caregiver_resp_prop` | Share of distress vocalizations during which a caregiver vocalized (0 to 1) |
+| `Warmth_median_FAN`, `Warmth_iqr_FAN`, `Warmth_median_MAN`, `Warmth_iqr_MAN` | Median and IQR of the fundamental frequency (F0) of FAN and MAN vocalizations during distress. Empty if there are none. |
+| `Overall_latency_of_response` | Smallest latency of response in the episode (saved, but not used by the model) |
 
 ```
 python extract_event_features.py
 ```
 
-### Step 4: Extract State-level Features
+## Step 4: Extract state-level features
 
 ```
 python extract_state_features.py
 ```
 
-### Step 5: Predict Sensitivity using Multiscale Temporal Model
+Reads `Example_Inputs/Episode_Annotations.csv` and writes `Features/State_level_features.csv`.
+
+Non-distress is removed, so each episode is the distress rows laid end to end. Each distress row is either in the
+**attended (response) state** (a caregiver, `*FAN` or `*MAN`, is vocalizing) or the unattended state. Consecutive
+rows in the same state form one visit, so a FAN row followed by a MAN row is a single response visit. As in the
+paper, features are computed for the attended state only, because the unattended state is its inverse.
+
+| Feature | Meaning |
+|---|---|
+| `Prop_in_Resp_region` | Share of the episode spent in the attended state |
+| `Visits_Resp_region` | Number of visits (transitions into the attended state) divided by episode duration |
+| `Median_return_time_resp_region` | Median length of the gaps between the first and last response. Needs at least two separate responses, otherwise empty. |
+| `Episode_dur`, `First_entry_resp` | Saved but not used by the model |
+
+## Event-level feature added: `Caregiver_first_begin`
+
+`extract_event_features.py` also writes `Caregiver_first_begin`, the overall latency of response for the episode:
+seconds from the first distress onset to the first caregiver (`*FAN` or `*MAN`) vocalization anywhere in the
+episode, including non-distress periods, so a response that only comes after the infant has stopped counts.
+It is empty if the caregiver never vocalizes, and `predict.py` treats that as a very late response.
+
+
+## Step 5: Predict caregiver sensitivity
 
 ```
 python predict.py
 ```
+
+Combines `Features/Frame_level_features.csv`, `Features/Event_level_features.csv` and
+`Features/State_level_features.csv` (matched on `Dist_Ep_IDs`), applies the trained model in
+`Model/Sensitivity_RF.joblib`, and writes `Results/Predictions.csv`:
+
+| Column | Meaning |
+|---|---|
+| `Dist_Ep_IDs` | Distress episode |
+| `Predicted_sensitivity` | `High` or `Low` |
+| `Prob_High`, `Prob_Low` | Model probabilities |
+
+Episodes missing from any of the three feature files are skipped, and a warning lists them. Very short episodes
+(under 0.4 seconds of distress audio) have no frame-level features and are therefore skipped.
+
+## Train your own model
+
+The saved model is trained with `train_model.py`. To train on your own data you need caregiver sensitivity ratings
+for your distress episodes in `Training_Data/Sensitivity_Labels.csv`:
+
+```
+Dist_Ep_IDs,Sensitivity_Quant
+P1_Dist_Ep1,6
+P1_Dist_Ep2,3
+```
+
+`Dist_Ep_IDs` must match the IDs used in Steps 1-4, and `Sensitivity_Quant` is the 1-7 sensitivity rating.
+A rating below 5 is labelled Low and 5 or above is High.
+
+Run Steps 1-4 on the same episodes, then:
+
+```
+python train_model.py
+```
+
+This trains a random forest (1000 trees) with SMOTE class balancing after dropping features that correlate above
+0.95, and saves it to `Model/Sensitivity_RF.joblib` together with the preprocessing it needs.
+
+### Training from features extracted earlier
+
+If you already have features extracted with an earlier version of this pipeline and cannot re-extract them,
+`prepare_training_data.py` converts them into the training format used above (edit the two input paths at
+the top of the script first):
+
+```
+python prepare_training_data.py
+python train_model.py
+```
+
+It keeps the features this repo also produces (the 76 acoustic features, the response-region state features and
+the distress-level event features), renames them to the repo's column names, and writes
+`Training_Data/Features/*.csv` and `Training_Data/Sensitivity_Labels.csv` (including a `Participant` column).
+Features that the repo does not extract (such as cry/fuss-specific ones) are left out. The model is only as
+consistent with new data as the earlier and current extraction code are, so say in your README which one
+the saved model was trained on.
+
+## Evaluate the model
+
+```
+python evaluate_model.py
+```
+
+Uses leave-one-participant-out cross-validation: for each participant, the model is trained on everyone else
+and tested on that participant. Feature filtering, balancing and missing-value fill values are learned inside each
+fold. It prints macro precision, recall and F1, balanced accuracy, a confusion matrix, and a table of the 1-7
+rating against the prediction, and writes `Results/Evaluation_Predictions.csv`.
+
+Participants are taken from the episode IDs: everything before `_Dist_Ep` (so `P1_Dist_Ep2` belongs to `P1`).
+If your IDs look different, add a `Participant` column to `Sensitivity_Labels.csv` and it is used instead.
 
 ## Contact
 Contact Priyanka Khante and Kaya de Barbaro should you have any question/suggestion or if you have any problems running the code at [priyanka.khante@utexas.edu](mailto:priyanka.khante@utexas.edu) and [kaya@austin.utexas.edu](mailto:kaya@austin.utexas.edu).
