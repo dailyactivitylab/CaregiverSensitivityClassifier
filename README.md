@@ -17,8 +17,7 @@ CaregiverSensitivityClassifier/
 │   └── Audio_Nondistress_Removed/   created by Step 1
 ├── Features/                  created by Steps 2-4
 ├── Model/                     Sensitivity_RF.joblib (the trained model)
-├── Results/                   created by predict.py and evaluate_model.py
-└── Training_Data/             only needed to train or evaluate a model (not shared)
+├── Results/                   created by predict.py 
 ```
 
 All scripts use relative paths (`../Example_Inputs`, `../Features`, and so on), so run them from inside `Code/`.
