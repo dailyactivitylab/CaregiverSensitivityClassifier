@@ -1,0 +1,16 @@
+# Python packages used by the scripts in Code/ (Python 3.11)
+#
+# These are the versions of the environment the model was trained in. Model/Sensitivity_RF.joblib should be
+# loaded with the same scikit-learn version that trained it.
+
+pandas==1.5.3
+numpy==1.24.3
+scikit-learn==1.3.0
+imbalanced-learn==0.12.0
+joblib==1.2.0
+
+# Audio feature extraction (remove_nondistress.py, extract_frame_features.py, extract_event_features.py)
+librosa==0.10.1
+pydub==0.25.1
+pyAudioAnalysis
+tqdm==4.65.0
