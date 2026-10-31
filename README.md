@@ -117,23 +117,13 @@ paper, features are computed for the attended state only, because the unattended
 | `Median_return_time_resp_region` | Median length of the gaps between the first and last response. Needs at least two separate responses, otherwise empty. |
 | `Episode_dur`, `First_entry_resp` | Saved but not used by the model |
 
-## Event-level feature added: `Caregiver_first_begin`
-
-`extract_event_features.py` also writes `Caregiver_first_begin`, the overall latency of response for the episode:
-seconds from the first distress onset to the first caregiver (`*FAN` or `*MAN`) vocalization anywhere in the
-episode, including non-distress periods, so a response that only comes after the infant has stopped counts.
-It is empty if the caregiver never vocalizes, and `predict.py` treats that as a very late response.
-
-
-## Step 5: Predict caregiver sensitivity
+### Step 5: Predict Caregiver Sensitivity
+The script `Code/predict.py` combines the frame, event and state features (matched on `Dist_Ep_IDs`), applies the
+trained model in `Model/Sensitivity_RF.joblib`, and writes `Results/Predictions.csv`.
 
 ```
 python predict.py
 ```
-
-Combines `Features/Frame_level_features.csv`, `Features/Event_level_features.csv` and
-`Features/State_level_features.csv` (matched on `Dist_Ep_IDs`), applies the trained model in
-`Model/Sensitivity_RF.joblib`, and writes `Results/Predictions.csv`:
 
 | Column | Meaning |
 |---|---|
@@ -141,63 +131,25 @@ Combines `Features/Frame_level_features.csv`, `Features/Event_level_features.csv
 | `Predicted_sensitivity` | `High` or `Low` |
 | `Prob_High`, `Prob_Low` | Model probabilities |
 
-Episodes missing from any of the three feature files are skipped, and a warning lists them. Very short episodes
-(under 0.4 seconds of distress audio) have no frame-level features and are therefore skipped.
+Episodes missing from any of the three feature files are left out, and a warning lists them. Missing latencies
+(no caregiver response) are treated as a very late response, filled with three times the largest latency seen in
+the training data. Other missing values are filled with -1, as in training.
 
-## Train your own model
+## About the model
 
-The saved model is trained with `train_model.py`. To train on your own data you need caregiver sensitivity ratings
-for your distress episodes in `Training_Data/Sensitivity_Labels.csv`:
+A random forest classifier trained on 387 distress episodes from 32 participants. It uses 85 features: the 76
+frame-level acoustic features, the event-level features (`Caregiver_first_begin`, the latency median and IQR,
+`Caregiver_resp_prop` and the four warmth features) and the state-level features (`Prop_in_Resp_region`,
+`Visits_Resp_region` and `Median_return_time_resp_region`). In leave-one-participant-out cross-validation it reached
+macro precision 0.731, macro recall 0.720 and macro F1 0.725.
 
-```
-Dist_Ep_IDs,Sensitivity_Quant
-P1_Dist_Ep1,6
-P1_Dist_Ep2,3
-```
+## Notes and limitations
 
-`Dist_Ep_IDs` must match the IDs used in Steps 1-4, and `Sensitivity_Quant` is the 1-7 sensitivity rating.
-A rating below 5 is labelled Low and 5 or above is High.
-
-Run Steps 1-4 on the same episodes, then:
-
-```
-python train_model.py
-```
-
-This trains a random forest (1000 trees) with SMOTE class balancing after dropping features that correlate above
-0.95, and saves it to `Model/Sensitivity_RF.joblib` together with the preprocessing it needs.
-
-### Training from features extracted earlier
-
-If you already have features extracted with an earlier version of this pipeline and cannot re-extract them,
-`prepare_training_data.py` converts them into the training format used above (edit the two input paths at
-the top of the script first):
-
-```
-python prepare_training_data.py
-python train_model.py
-```
-
-It keeps the features this repo also produces (the 76 acoustic features, the response-region state features and
-the distress-level event features), renames them to the repo's column names, and writes
-`Training_Data/Features/*.csv` and `Training_Data/Sensitivity_Labels.csv` (including a `Participant` column).
-Features that the repo does not extract (such as cry/fuss-specific ones) are left out. The model is only as
-consistent with new data as the earlier and current extraction code are, so say in your README which one
-the saved model was trained on.
-
-## Evaluate the model
-
-```
-python evaluate_model.py
-```
-
-Uses leave-one-participant-out cross-validation: for each participant, the model is trained on everyone else
-and tested on that participant. Feature filtering, balancing and missing-value fill values are learned inside each
-fold. It prints macro precision, recall and F1, balanced accuracy, a confusion matrix, and a table of the 1-7
-rating against the prediction, and writes `Results/Evaluation_Predictions.csv`.
-
-Participants are taken from the episode IDs: everything before `_Dist_Ep` (so `P1_Dist_Ep2` belongs to `P1`).
-If your IDs look different, add a `Participant` column to `Sensitivity_Labels.csv` and it is used instead.
+- Features for new data must be extracted with the scripts in this repository, because the model was trained on
+  features computed in the same way. In particular, the F0 values for warmth are computed with `librosa.pyin` and its
+  default sample rate, and frame features use 0.4 second windows with a 0.2 second step.
+- The model was trained on LENA-recorded home audio, with adult speech tags from LENA. Performance on other kinds of
+  recordings is not known.
 
 ## Contact
 Contact Priyanka Khante and Kaya de Barbaro should you have any question/suggestion or if you have any problems running the code at [priyanka.khante@utexas.edu](mailto:priyanka.khante@utexas.edu) and [kaya@austin.utexas.edu](mailto:kaya@austin.utexas.edu).
